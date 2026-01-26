@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 
 use wdl_analysis::Diagnostics;
 use wdl_analysis::Document;
+use wdl_analysis::SyntaxNodeExt;
 use wdl_analysis::VisitReason;
 use wdl_analysis::Visitor;
 use wdl_ast::AstNode;
@@ -331,6 +332,7 @@ impl Rule for ExpectedRuntimeKeysRule {
         Some(&[
             SyntaxKind::VersionStatementNode,
             SyntaxKind::RuntimeSectionNode,
+            SyntaxKind::RuntimeItemNode,
         ])
     }
 
@@ -527,7 +529,16 @@ impl Visitor for ExpectedRuntimeKeysRule {
                     None => {
                         // If the key was _not_ found in the map, that means the
                         // key was not one of the permitted values for WDL v1.1.
-                        self.non_reserved_keys.insert(key_name.hashable());
+                        //
+                        // Add it to the list of tracked non-reserved keys if it wasn't
+                        // specifically except'ed
+                        if !is_rule_excepted_in_ancestors(
+                            ID,
+                            SyntaxElement::from(item.inner().clone()),
+                            &self.exceptable_nodes(),
+                        ) {
+                            self.non_reserved_keys.insert(key_name.hashable());
+                        }
                     }
                 }
             }
@@ -535,4 +546,23 @@ impl Visitor for ExpectedRuntimeKeysRule {
 
         self.encountered_keys.push(key_name);
     }
+}
+
+// We can't use `exceptable_add` here since we aren't adding a diagnostic directly, but rather checking the
+// elements that should be in the top level RuntimeSection diagnostic
+fn is_rule_excepted_in_ancestors(
+    rule_id: &'static str,
+    element: SyntaxElement,
+    exceptable_nodes: &Option<&'static [SyntaxKind]>,
+) -> bool {
+    for node in element.ancestors().filter(|node| {
+        exceptable_nodes
+            .as_ref()
+            .is_none_or(|nodes| nodes.contains(&node.kind()))
+    }) {
+        if node.is_rule_excepted(rule_id) {
+            return true;
+        }
+    }
+    false
 }
